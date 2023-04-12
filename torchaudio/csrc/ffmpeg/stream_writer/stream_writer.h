@@ -4,6 +4,7 @@
 #include <torchaudio/csrc/ffmpeg/ffmpeg.h>
 #include <torchaudio/csrc/ffmpeg/filter_graph.h>
 #include <torchaudio/csrc/ffmpeg/stream_writer/encode_process.h>
+#include <torchaudio/csrc/ffmpeg/stream_writer/packet_writer.h>
 #include <torchaudio/csrc/ffmpeg/stream_writer/types.h>
 
 namespace torchaudio {
@@ -13,11 +14,13 @@ namespace io {
 /// Encode and write audio/video streams chunk by chunk
 ///
 class StreamWriter {
-  AVFormatOutputContextPtr pFormatContext;
-  AVBufferRefPtr pHWBufferRef;
-  std::vector<EncodeProcess> processes;
-  AVPacketPtr pkt;
+  AVFormatOutputContextPtr format_ctx;
+  std::map<int, EncodeProcess> processes;
+  std::map<int, PacketWriter> packet_writers;
+
+  AVPacketPtr pkt{alloc_avpacket()};
   bool is_open = false;
+  int current_key = 0;
 
  protected:
   /// @cond
@@ -99,6 +102,10 @@ class StreamWriter {
   /// override the format used for encoding.
   ///  To list supported formats for the encoder, you can use
   /// ``ffmpeg -h encoder=<ENCODER>`` command.
+  /// @param encoder_sample_rate If provided, perform resampling
+  /// before encoding.
+  /// @param encoder_num_channels If provided, change channel configuration
+  /// before encoding.
   /// @param codec_config Codec configuration.
   /// @param filter_desc Additional processing to apply before
   /// encoding the input data
@@ -134,6 +141,9 @@ class StreamWriter {
   /// @param encoder See ``add_audio_stream()``.
   /// @param encoder_option See ``add_audio_stream()``.
   /// @param encoder_format See ``add_audio_stream()``.
+  /// @param encoder_frame_rate If provided, change frame rate before encoding.
+  /// @param encoder_width If provided, resize image before encoding.
+  /// @param encoder_height If provided, resize image before encoding.
   /// @param hw_accel Enable hardware acceleration.
   /// @param codec_config Codec configuration.
   /// @parblock
@@ -195,7 +205,16 @@ class StreamWriter {
       const c10::optional<std::string>& hw_accel = c10::nullopt,
       const c10::optional<CodecConfig>& codec_config = c10::nullopt,
       const c10::optional<std::string>& filter_desc = c10::nullopt);
+
+  /// Add packet stream. Intended to be used in conjunction with
+  /// ``StreamReader`` to perform packet passthrough.
+  /// @param stream_params Stream parameters returned by
+  /// ``StreamReader::get_src_stream_params()`` for the packet stream to pass
+  /// through.
+  void add_packet_stream(const StreamParams& stream_params);
+
   /// @endcond
+
   /// Set file-level metadata
   /// @param metadata metadata.
   void set_metadata(const OptionDict& metadata);
@@ -256,9 +275,16 @@ class StreamWriter {
   /// @param i Stream index.
   /// @param frame Frame to write.
   void write_frame(int i, AVFrame* frame);
+  /// Write packet.
+  /// @param packet Packet to write, passed from ``StreamReader``.
+  void write_packet(const AVPacketPtr& packet);
   /// @endcond
+
   /// Flush the frames from encoders and write the frames to the destination.
   void flush();
+
+ private:
+  int num_output_streams();
 };
 
 } // namespace io
